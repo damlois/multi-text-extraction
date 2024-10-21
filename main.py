@@ -1,60 +1,10 @@
-import fitz
 import streamlit as st
-import pandas as pd
 
 from utils import (
     process_docx,
     process_csv,
-    process_pdf,
-    extract_text_from_pages_single_threaded,
-    extract_tables_from_pdf,
-    extract_images_from_pages,
-    extract_charts_from_pdf,
-    parse_page_range,
+    process_pdf
 )
-
-
-def process_pdf(file_obj, page_range_str=None, extraction_category=None):
-    pdf_bytes = file_obj.read()
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    num_pages = doc.page_count
-
-    # Parse the page range from the input string
-    page_indices = parse_page_range(page_range_str, num_pages)
-    if page_indices is None:
-        return {"error": "Invalid page range or out of bounds. Please check the document page numbers."}
-
-    if not page_indices:  # Extract all pages if no specific range provided
-        page_indices = list(range(num_pages))  # All pages
-
-    # Perform the extraction based on the selected category
-    if extraction_category == "Text":
-        extracted_tables = extract_tables_from_pdf(pdf_bytes, page_indices)
-        if extracted_tables:
-            message = f"Extracted tables from pages {page_range_str or 'all'}."
-            return {"tables": extracted_tables, "message": message}
-        else:
-            return {"error": "No tables found."}
-    elif extraction_category == "Tables":
-        extracted_tables = extract_tables_from_pdf(pdf_bytes, page_indices)
-        if extracted_tables:
-            message = f"Extracted tables from pages {page_range_str or 'all'}."
-            return {"tables": extracted_tables, "message": message}
-        else:
-            return {"error": "No tables found."}
-    elif extraction_category == "Images":
-        extracted_images = extract_images_from_pages(pdf_bytes, page_indices)
-        if not extracted_images:
-            return {"error": "No images found."}
-        return {"images": extracted_images, "message": "Images extracted successfully."}
-    elif extraction_category == "Charts & Graphs":
-        extracted_images = extract_charts_from_pdf(pdf_bytes, page_indices)
-        if not extracted_images:
-            return {"error": "No charts or graphs found."}
-        return {"images": extracted_images, "message": "Charts and graphs extracted successfully."}
-    else:
-        return {"error": "Invalid extraction category selected."}
-
 
 # Streamlit UI
 st.title("Document Processing Tool")
