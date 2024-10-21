@@ -5,6 +5,7 @@ import pandas as pd
 from utils import (
     process_docx,
     process_csv,
+    process_pdf,
     extract_text_from_pages_single_threaded,
     extract_tables_from_pdf,
     extract_images_from_pages,
@@ -27,7 +28,14 @@ def process_pdf(file_obj, page_range_str=None, extraction_category=None):
         page_indices = list(range(num_pages))  # All pages
 
     # Perform the extraction based on the selected category
-    if extraction_category == "Tables":
+    if extraction_category == "Text":
+        extracted_tables = extract_tables_from_pdf(pdf_bytes, page_indices)
+        if extracted_tables:
+            message = f"Extracted tables from pages {page_range_str or 'all'}."
+            return {"tables": extracted_tables, "message": message}
+        else:
+            return {"error": "No tables found."}
+    elif extraction_category == "Tables":
         extracted_tables = extract_tables_from_pdf(pdf_bytes, page_indices)
         if extracted_tables:
             message = f"Extracted tables from pages {page_range_str or 'all'}."
@@ -58,7 +66,7 @@ if uploaded_file:
 
     if file_type == "pdf":
         page_range_str = st.text_input("Enter page range (e.g., 1-3,5):")
-        extraction_category = st.selectbox("Select extraction category", ["Tables", "Images", "Charts & Graphs"])
+        extraction_category = st.selectbox("Select extraction category", ["Text", "Tables", "Images"])
 
         if st.button("Process PDF"):
             result = process_pdf(uploaded_file, page_range_str, extraction_category)
