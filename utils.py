@@ -7,6 +7,7 @@ import camelot
 import pandas as pd
 from spire.doc import Document
 import tempfile
+from tabula import read_pdf
 
 
 # Parse the page range input from the user
@@ -97,21 +98,45 @@ def extract_images_from_pages(pdf_bytes, page_indices=None):
 
 
 # Extract tables from specific page indices of a PDF using Camelot
+# def extract_tables_from_pdf(pdf_bytes, page_indices=None):
+#     # Write the PDF bytes to a temporary file for Camelot to process
+#     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+#         tmp_file.write(pdf_bytes)
+#         tmp_file_path = tmp_file.name
+#
+#     extracted_tables = []
+#     for page in page_indices:
+#         tables = camelot.read_pdf(tmp_file_path, pages=str(page + 1))
+#         if tables:
+#             for table in tables:
+#                 df = table.df
+#                 extracted_tables.append(df)
+#     return extracted_tables
+
+
 def extract_tables_from_pdf(pdf_bytes, page_indices=None):
-    # Write the PDF bytes to a temporary file for Camelot to process
+    # Write the PDF bytes to a temporary file for Tabula to process
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
         tmp_file.write(pdf_bytes)
         tmp_file_path = tmp_file.name
 
     extracted_tables = []
-    for page in page_indices:
-        tables = camelot.read_pdf(tmp_file_path, pages=str(page + 1))
-        if tables:
-            for table in tables:
-                df = table.df
-                extracted_tables.append(df)
-    return extracted_tables
 
+    # Tabula can process multiple pages in one call, so we gather all page indices
+    page_range = ','.join(str(page + 1) for page in page_indices) if page_indices else 'all'
+
+    # Use read_pdf to extract tables from the specified pages
+    tables = read_pdf(tmp_file_path, pages=page_range, multiple_tables=True)
+
+    for table in tables:
+        # Convert to DataFrame
+        df = pd.DataFrame(table)
+
+        # Retain the header without altering it
+        if not df.empty:
+            extracted_tables.append(df)
+
+    return extracted_tables
 
 # Extract charts and graphs (as images) from a PDF
 def extract_charts_from_pdf(pdf_bytes, page_indices=None):

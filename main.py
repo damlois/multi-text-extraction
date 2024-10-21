@@ -1,5 +1,7 @@
+import fitz
 import streamlit as st
 import pandas as pd
+
 from utils import (
     process_docx,
     process_csv,
@@ -66,13 +68,19 @@ if uploaded_file:
             else:
                 st.success(result["message"])
 
-                # Display extracted tables as a DataFrame and allow download as CSV
+                # Store the extracted tables in session state
                 if "tables" in result:
-                    for table in result["tables"]:
+                    # Initialize session state for tables if not already set
+                    if 'extracted_tables' not in st.session_state:
+                        st.session_state.extracted_tables = []
+
+                    # Append new tables to the session state
+                    st.session_state.extracted_tables.extend(result["tables"])
+
+                    # Display extracted tables as DataFrame and allow download as CSV
+                    for idx, table in enumerate(st.session_state.extracted_tables):  # Use session state
+                        st.text(f"Table {idx + 1}")
                         st.dataframe(table)
-                        csv = table.to_csv(index=False).encode('utf-8')
-                        st.download_button("Download as CSV", data=csv, file_name="extracted_table.csv",
-                                           mime="text/csv")
 
     elif file_type == "docx":
         st.write("Processing DOCX...")
