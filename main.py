@@ -16,11 +16,14 @@ if uploaded_file:
 
     if file_type == "pdf":
         extraction_category = st.selectbox("Select extraction category", ["Text", "Tables", "Images"])
+        inference_prompt = ""
+        if extraction_category == "Images":
+            inference_prompt = st.text_input("Enter specific instruction for AI inferencing")
         page_range_str = st.text_input("Enter page range (e.g., 1-3,5):")
 
         if st.button("Process PDF"):
             with st.spinner("Processing PDF... Please wait."):
-                result = asyncio.run(process_pdf(uploaded_file, page_range_str, extraction_category))
+                result = asyncio.run(process_pdf(uploaded_file, page_range_str, extraction_category, inference_prompt))
 
             if "error" in result:
                 st.error(result["error"])

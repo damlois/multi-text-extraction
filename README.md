@@ -84,9 +84,9 @@ This will start the application, and you can access it in your browser at `http:
 MultiTextExtractor/
 ├── utils/
 │   ├── file_type/             # Directory for file-type-specific utilities
-│   │   ├── __init__.py        # Initialization for file_type module
-│   │   ├── display.py         # File display utilities
-│   │   └── helpers.py         # Helper functions for file processing
+│   ├── __init__.py            # Initialization for file_type module
+│   ├── display.py             # Result display utilities
+│   ├── helpers.py             # Helper functions for file processing
 ├── venv/                      # Virtual environment directory
 ├── .env                       # Environment variables file
 ├── .gitignore                 # Git ignore file
@@ -104,4 +104,3 @@ MultiTextExtractor/
 - **Streamlit**: For building the frontend interface.
 - **AWS S3**: Storage for extracted images.
 - **Hugging Face**: NLP and machine learning model API.
-- **python-dotenv**: For loading environment variables.

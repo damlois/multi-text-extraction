@@ -8,11 +8,11 @@ def display_tables(result):
             table = table_with_context.get("table", None)
 
             if context:
-                st.text(f"Context for Table {idx + 1}:")
+                # st.text(f"Context for Table {idx + 1}:")
                 st.write(context)
 
             if isinstance(table, pd.DataFrame):
-                st.text(f"Table {idx + 1}")
+                # st.text(f"Table {idx + 1}")
                 st.dataframe(table)
             else:
                 st.warning(f"Skipped a non-DataFrame item: {table}")

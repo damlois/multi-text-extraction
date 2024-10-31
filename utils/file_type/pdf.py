@@ -11,12 +11,12 @@ from dotenv import load_dotenv
 from urllib.parse import quote_plus
 from multiprocessing import Pool, cpu_count
 from model import process_images
-from utils.helpers import parse_page_range, upload_image_to_s3
+from utils.helpers import parse_page_range, upload_image_to_s3, delete_all_objects
 
 load_dotenv()
 
 
-async def process_pdf(file_obj, page_range_str=None, extraction_category=None):
+async def process_pdf(file_obj, page_range_str=None, extraction_category=None, inference_prompt=None):
     pdf_bytes = file_obj.read()
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     num_pages = doc.page_count
@@ -39,7 +39,7 @@ async def process_pdf(file_obj, page_range_str=None, extraction_category=None):
             return {"error": "No tables found."}
         return {"data": extracted_tables, "message": f"Extracted tables from pages {page_range_str or 'all'}."}
     elif extraction_category == "Images":
-        extracted_images = await extract_images_from_pdf(pdf_bytes, page_indices)
+        extracted_images = await extract_images_from_pdf(pdf_bytes, page_indices, inference_prompt)
         if not extracted_images:
             return {"error": "No images found."}
         return {"data": extracted_images,
@@ -103,6 +103,7 @@ def extract_tables_from_pdf(pdf_bytes, page_indices=None):
             right = left + width
 
             table_bbox = (left, top, right, bottom)
+            print(table_bbox)
             table_data = table_info['data']
             cleaned_table_data = []
 
@@ -114,7 +115,7 @@ def extract_tables_from_pdf(pdf_bytes, page_indices=None):
 
             df = pd.DataFrame(cleaned_table_data)
 
-            surrounding_text = extract_surrounding_text(page_text, table_bbox)
+            surrounding_text = extract_surrounding_text(page_text, left, top, right, bottom)
 
             extracted_tables_with_context.append({
                 "table": df,
@@ -124,29 +125,39 @@ def extract_tables_from_pdf(pdf_bytes, page_indices=None):
     return extracted_tables_with_context
 
 
-def extract_surrounding_text(page_text, table_bbox, context_buffer=50):
+def extract_surrounding_text(page_text, left, top, right, bottom):
     surrounding_text = []
+    context_buffer = 25  # Smaller buffer for closer context only
 
     for block in page_text:
-        if len(block) >= 5:
-            x0, y0, x1, y1, text = block[:5]
+        x0, y0, x1, y1, text = block[:5]
 
-            if (
-                    (y1 < table_bbox[1] + context_buffer and y0 > table_bbox[1] - context_buffer)
-                    or (y0 > table_bbox[3] and y1 < table_bbox[3] + context_buffer)
-            ):
-                surrounding_text.append(text)
+        # Check if the block is horizontally aligned with the table
+        is_within_horizontal_range = (x0 < right and x1 > left)
+
+        # Check if the block is directly above the table within a small buffer
+        is_above_table = (y1 <= top and y1 >= top - context_buffer)
+
+        # Check if the block is directly below the table within a small buffer
+        is_below_table = (y0 >= bottom and y0 <= bottom + context_buffer)
+
+        # Append text if it's horizontally aligned and very close to the table
+        if is_within_horizontal_range and (is_above_table or is_below_table):
+            surrounding_text.append(text)
 
     return " ".join(surrounding_text)
 
 
-async def extract_images_from_pdf(pdf_bytes, page_indices=None):
+async def extract_images_from_pdf(pdf_bytes, page_indices=None, inference_prompt=None):
     bucket_name = os.getenv("BUCKET_NAME")
     image_urls = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page_range = range(doc.page_count) if page_indices is None else page_indices
 
+    await delete_all_objects(bucket_name)
+
     tasks = []
+
     for i in page_range:
         page = doc.load_page(i)
         images = page.get_images(full=True)
@@ -163,7 +174,7 @@ async def extract_images_from_pdf(pdf_bytes, page_indices=None):
             image_urls.append(image_url)
 
     await asyncio.gather(*tasks)
-    return await process_images(image_urls)
+    return await process_images(image_urls, inference_prompt)
 
 
 def extract_text_from_pages_single_threaded(pdf_bytes):
