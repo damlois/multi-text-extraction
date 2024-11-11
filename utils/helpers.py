@@ -57,3 +57,9 @@ async def upload_image_to_s3(image_bytes, bucket_name, object_name):
             print(f"Failed to upload {object_name}: {e}")
 
 
+def validate_page_range(page_range_str, num_pages):
+    page_indices = parse_page_range(page_range_str, num_pages)
+    if page_indices is None:
+        return {"error": "Invalid page range or out of bounds. Please check the document page numbers."}
+
+    return page_indices if page_indices else list(range(num_pages))

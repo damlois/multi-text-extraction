@@ -1,51 +1,77 @@
 import os
 import asyncio
+
+import camelot
 import fitz
 import pytesseract
 from PIL import Image
 from io import BytesIO
 import tempfile
 import pandas as pd
-from tabula import read_pdf
+from table import read_pdf
 from dotenv import load_dotenv
 from urllib.parse import quote_plus
 from multiprocessing import Pool, cpu_count
-from model import process_images
-from utils.helpers import parse_page_range, upload_image_to_s3, delete_all_objects
+# from model import process_images
+from utils.helpers import upload_image_to_s3, delete_all_objects, validate_page_range
 
 load_dotenv()
 
 
-async def process_pdf(file_obj, page_range_str=None, extraction_category=None, inference_prompt=None):
+async def process_pdf(file_obj, page_range_str=None, extraction_category=None):
     pdf_bytes = file_obj.read()
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     num_pages = doc.page_count
 
-    page_indices = parse_page_range(page_range_str, num_pages)
-    if page_indices is None:
-        return {"error": "Invalid page range or out of bounds. Please check the document page numbers."}
+    page_indices = validate_page_range(page_range_str, num_pages)
+    if "error" in page_indices:
+        return page_indices
 
-    if not page_indices:
-        page_indices = list(range(num_pages))
+    extraction_func = get_extraction_function(extraction_category)
 
-    if extraction_category == "Text":
-        extracted_text = extract_text_from_pdf(pdf_bytes, page_indices)
-        if not extracted_text:
-            return {"error": "No text found."}
-        return {"data": extracted_text, "message": f"Extracted text from pages {page_range_str or 'all'}."}
-    elif extraction_category == "Tables":
-        extracted_tables = extract_tables_from_pdf(pdf_bytes, page_indices)
-        if not extracted_tables:
-            return {"error": "No tables found."}
-        return {"data": extracted_tables, "message": f"Extracted tables from pages {page_range_str or 'all'}."}
-    elif extraction_category == "Images":
-        extracted_images = await extract_images_from_pdf(pdf_bytes, page_indices, inference_prompt)
-        if not extracted_images:
-            return {"error": "No images found."}
-        return {"data": extracted_images,
-                "message": f"Extracted images from pages {page_range_str or 'all'}."}
+    if len(page_range_str or "") > 10:
+        extracted_data = parallel_pdf_text_extraction(pdf_bytes, page_indices, extraction_func)
     else:
-        return {"error": "Invalid extraction category selected."}
+        extracted_data = await perform_extraction(extraction_func, pdf_bytes, page_indices, extraction_category)
+
+    return generate_response(extracted_data, extraction_category, page_range_str)
+
+
+def get_extraction_function(category):
+    extraction_functions = {
+        "Text": extract_text_from_pdf,
+        "Tables": extract_tables_from_pdf,
+        "Images": extract_images_from_pdf
+    }
+    return extraction_functions.get(category)
+
+
+async def perform_extraction(extraction_func, pdf_bytes, page_indices, category):
+    if category == "Images":
+        return await extraction_func(pdf_bytes, page_indices)
+    return extraction_func(pdf_bytes, page_indices)
+
+
+def generate_response(extracted_data, category, page_range_str):
+    if not extracted_data:
+        return {"error": f"No {category.lower()} found."}
+
+    return {
+        "data": extracted_data,
+        "message": f"Extracted {category.lower()} from pages {page_range_str or 'all'}."
+    }
+
+
+def parallel_pdf_text_extraction(pdf_bytes, page_indices, extract_function):
+    cpu = cpu_count()
+    seg_size = int(len(page_indices) / cpu + 1)
+    indices_segments = [page_indices[i * seg_size:(i + 1) * seg_size] for i in range(cpu)]
+
+    with Pool() as pool:
+        results = pool.starmap(extract_function, [(pdf_bytes, idx_segment) for idx_segment in indices_segments])
+
+    combined_text = "".join(results)
+    return combined_text
 
 
 def extract_text_from_pdf(pdf_bytes, indices):
@@ -90,44 +116,86 @@ def extract_tables_from_pdf(pdf_bytes, page_indices=None):
 
     for page_num in page_indices:
         page = doc.load_page(page_num)
-        page_text = page.get_text("blocks")
 
-        tables = read_pdf(tmp_file_path, pages=str(page_num + 1), multiple_tables=True, output_format='json')
+        tables = camelot.read_pdf(tmp_file_path, pages=str(page_num + 1))
 
-        for table_info in tables:
-            top = table_info['top']
-            left = table_info['left']
-            width = table_info['width']
-            height = table_info['height']
-            bottom = top + height
-            right = left + width
+        for i, table in enumerate(tables):
+            parsing_report = table.parsing_report
+            df = table.df
 
-            table_bbox = (left, top, right, bottom)
-            print(table_bbox)
-            table_data = table_info['data']
-            cleaned_table_data = []
+            page_text = page.get_text("blocks")
+            left, top, right, bottom = table._bbox
+            page_height = page.rect.height
 
-            if isinstance(table_data, list):
-                for row in table_data:
-                    if isinstance(row, list):
-                        cleaned_row = [cell.get('text', '') for cell in row if isinstance(cell, dict)]
-                        cleaned_table_data.append(cleaned_row)
-
-            df = pd.DataFrame(cleaned_table_data)
-
-            surrounding_text = extract_surrounding_text(page_text, left, top, right, bottom)
+            surrounding_text = extract_surrounding_text(page_text, left, page_height - bottom, right, page_height - top)
+            parsing_report["context"] = surrounding_text
 
             extracted_tables_with_context.append({
                 "table": df,
-                "context": surrounding_text
+                "parsing_report": parsing_report
             })
 
     return extracted_tables_with_context
 
 
+# def extract_tables_from_pdf(pdf_bytes, page_indices=None):
+#     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+#     total_pages = doc.page_count
+#
+#     if page_indices:
+#         page_indices = [i for i in page_indices if i < total_pages]
+#     else:
+#         page_indices = range(total_pages)
+#
+#     extracted_tables_with_context = []
+#
+#     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+#         tmp_file.write(pdf_bytes)
+#         tmp_file_path = tmp_file.name
+#
+#     for page_num in page_indices:
+#         page = doc.load_page(page_num)
+#         page_text = page.get_text("blocks")
+#
+#         tables = read_pdf(tmp_file_path, pages=str(page_num + 1), multiple_tables=True, output_format='json')
+#
+#         for table_info in tables:
+#             top = table_info['top']
+#             left = table_info['left']
+#             width = table_info['width']
+#             height = table_info['height']
+#             bottom = top + height
+#             right = left + width
+#
+#             # st.text(f"left {left} top {top} right {right} bottom {bottom}")
+#
+#             table_bbox = (left, top, right, bottom)
+#             table_data = table_info['data']
+#             cleaned_table_data = []
+#
+#             if isinstance(table_data, list):
+#                 for row in table_data:
+#                     if isinstance(row, list):
+#                         cleaned_row = [cell.get('text', '') for cell in row if isinstance(cell, dict)]
+#                         cleaned_table_data.append(cleaned_row)
+#
+#             df = pd.DataFrame(cleaned_table_data)
+#
+#             surrounding_text = extract_surrounding_text(page_text, left, top, right, bottom)
+#
+#             extracted_tables_with_context.append({
+#                 "table": df,
+#                 "context": surrounding_text
+#             })
+#
+#     return extracted_tables_with_context
+
+
 def extract_surrounding_text(page_text, left, top, right, bottom):
     surrounding_text = []
     context_buffer = 25  # Smaller buffer for closer context only
+
+    print(left, top, right, bottom)
 
     for block in page_text:
         x0, y0, x1, y1, text = block[:5]
@@ -148,7 +216,7 @@ def extract_surrounding_text(page_text, left, top, right, bottom):
     return " ".join(surrounding_text)
 
 
-async def extract_images_from_pdf(pdf_bytes, page_indices=None, inference_prompt=None):
+async def extract_images_from_pdf(pdf_bytes, page_indices=None):
     bucket_name = os.getenv("BUCKET_NAME")
     image_urls = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -174,27 +242,5 @@ async def extract_images_from_pdf(pdf_bytes, page_indices=None, inference_prompt
             image_urls.append(image_url)
 
     await asyncio.gather(*tasks)
-    return await process_images(image_urls, inference_prompt)
-
-
-def extract_text_from_pages_single_threaded(pdf_bytes):
-    extracted_text = ""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    num_pages = doc.page_count
-    for i in range(num_pages):
-        page = doc.load_page(i)
-        extracted_text += page.get_text("text")
-        if not extracted_text.strip():
-            extracted_text = extract_text_with_tesseract(pdf_bytes)
-        extracted_text += f"\n--- End of Page {i + 1} ---\n"
-    return extracted_text
-
-
-def parallel_pdf_text_extraction(pdf_bytes, num_pages):
-    cpu = cpu_count()
-    seg_size = int(num_pages / cpu + 1)
-    indices = [range(i * seg_size, min((i + 1) * seg_size, num_pages)) for i in range(cpu)]
-    with Pool() as pool:
-        results = pool.starmap(extract_text_from_pdf, [(pdf_bytes, idx) for idx in indices])
-    combined_text = "".join(results)
-    return combined_text
+    return image_urls
+    # return await process_images(image_urls, inference_prompt)
