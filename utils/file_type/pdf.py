@@ -35,7 +35,7 @@ async def process_pdf(file_obj, page_range_str=None, extraction_category=None):
     else:
         extracted_data = await perform_extraction(extraction_func, pdf_bytes, page_indices, extraction_category)
 
-    return generate_response(extracted_data, extraction_category, page_range_str)
+    return generate_response(extracted_data, extraction_category, page_range_str, file_obj)
 
 
 # Helper function to get the correct extraction function based on category (Text, Tables, or Images)
@@ -56,13 +56,13 @@ async def perform_extraction(extraction_func, pdf_bytes, page_indices, category)
 
 
 # Function to generate the response to return after processing
-def generate_response(extracted_data, category, page_range_str):
+def generate_response(extracted_data, category, page_range_str, file_obj):
     if not extracted_data:
-        return {"error": f"No {category.lower()} found."}
+        return {"error": f"No {category.lower()} found in pages {page_range_str or 'all'} of {file_obj.name}."}
 
     return {
         "data": extracted_data,
-        "message": f"Extracted {category.lower()} from pages {page_range_str or 'all'}."
+        "message": f"Extracted {category.lower()} from pages {page_range_str or 'all'} in {file_obj.name}."
     }
 
 
